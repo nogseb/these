@@ -1,0 +1,81 @@
+name: Publier le projet de recherche sur nogues.app/these
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/check_site.py'
+      - '.github/workflows/deploy-ovh.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ovh-these
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SFTP_HOST: ${{ secrets.OVH_SFTP_HOST }}
+      SFTP_USER: ${{ secrets.OVH_SFTP_USER }}
+      LFTP_PASSWORD: ${{ secrets.OVH_SFTP_PASSWORD }}
+      SFTP_KNOWN_HOSTS: ${{ secrets.OVH_SFTP_KNOWN_HOSTS }}
+      TARGET_DIR: www/these
+    steps:
+      - name: Vérifier la configuration du dépôt
+        run: |
+          if [ -z "$SFTP_HOST" ] || [ -z "$SFTP_USER" ] || [ -z "$LFTP_PASSWORD" ] || [ -z "$SFTP_KNOWN_HOSTS" ]; then
+            echo "::error::Ajouter les secrets OVH_SFTP_HOST, OVH_SFTP_USER, OVH_SFTP_PASSWORD et OVH_SFTP_KNOWN_HOSTS dans Settings > Secrets and variables > Actions de nogseb/these. Aucune publication effectuée."
+            exit 1
+          fi
+          test "$TARGET_DIR" = 'www/these'
+
+      - name: Récupérer le site
+        uses: actions/checkout@v4
+
+      - name: Valider le site statique
+        run: |
+          python3 scripts/check_site.py
+          node --check site/assets/site.js
+
+      - name: Installer lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
+      - name: Installer la clé SSH de l’hébergement vérifiée hors bande
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SFTP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$SFTP_HOST" -f "$HOME/.ssh/known_hosts" > /dev/null
+
+      - name: Envoyer uniquement site/ vers www/these
+        run: |
+          # --delete n’est volontairement jamais utilisé.
+          # Le mot de passe est lu dans l’environnement, pas dans les arguments.
+          lftp --env-password -u "$SFTP_USER" "sftp://$SFTP_HOST" -e "
+            set cmd:fail-exit yes;
+            set sftp:auto-confirm no;
+            set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes';
+            set net:timeout 20;
+            set net:max-retries 3;
+            set net:reconnect-interval-base 5;
+            mkdir -p -f '$TARGET_DIR';
+            mirror --reverse --parallel=4 site/ '$TARGET_DIR';
+            bye"
+
+      - name: Vérifier la réponse publique
+        run: |
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 5 \
+            'https://nogues.app/these/' -o /tmp/these-public.html
+          grep -q 'L’effet prothèse' /tmp/these-public.html
+          grep -q 'Sébastien Noguès' /tmp/these-public.html
+          curl --fail --silent --show-error --location \
+            'https://nogues.app/these/assets/partage.png' -o /dev/null
+          curl --fail --silent --show-error --location \
+            'https://nogues.app/these/documents/synthese-projet.md' -o /dev/null
+          echo 'Site publié et réponse publique vérifiée : https://nogues.app/these/' >> "$GITHUB_STEP_SUMMARY"
