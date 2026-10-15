@@ -29,8 +29,8 @@ jobs:
     steps:
       - name: Vérifier la configuration du dépôt
         run: |
-          if [ -z "$SFTP_HOST" ] || [ -z "$SFTP_USER" ] || [ -z "$LFTP_PASSWORD" ] || [ -z "$SFTP_KNOWN_HOSTS" ]; then
-            echo "::error::Ajouter les secrets OVH_SFTP_HOST, OVH_SFTP_USER, OVH_SFTP_PASSWORD et OVH_SFTP_KNOWN_HOSTS dans Settings > Secrets and variables > Actions de nogseb/these. Aucune publication effectuée."
+          if [ -z "$SFTP_HOST" ] || [ -z "$SFTP_USER" ] || [ -z "$LFTP_PASSWORD" ]; then
+            echo "::error::Ajouter les secrets OVH_SFTP_HOST, OVH_SFTP_USER et OVH_SFTP_PASSWORD dans Settings > Secrets and variables > Actions de nogseb/these. Aucune publication effectuée."
             exit 1
           fi
           test "$TARGET_DIR" = 'www/these'
@@ -46,12 +46,25 @@ jobs:
       - name: Installer lftp
         run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
 
-      - name: Installer la clé SSH de l’hébergement vérifiée hors bande
+      - name: Restaurer les clés d’hôte déjà mémorisées
+        uses: actions/cache@v4
+        with:
+          path: ~/.ssh/known_hosts
+          key: ovh-these-known-hosts-v1
+
+      - name: Préparer la vérification SSH de l’hébergement
         run: |
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$SFTP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          if [ -n "$SFTP_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SFTP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+            ssh-keygen -F "$SFTP_HOST" -f "$HOME/.ssh/known_hosts" > /dev/null
+            echo 'SFTP_HOST_KEY_POLICY=yes' >> "$GITHUB_ENV"
+          else
+            touch "$HOME/.ssh/known_hosts"
+            echo 'SFTP_HOST_KEY_POLICY=accept-new' >> "$GITHUB_ENV"
+            echo 'SSH : confiance à la première connexion ; clé mémorisée et tout changement ultérieur refusé.' >> "$GITHUB_STEP_SUMMARY"
+          fi
           chmod 600 "$HOME/.ssh/known_hosts"
-          ssh-keygen -F "$SFTP_HOST" -f "$HOME/.ssh/known_hosts" > /dev/null
 
       - name: Envoyer uniquement site/ vers www/these
         run: |
@@ -60,7 +73,7 @@ jobs:
           lftp --env-password -u "$SFTP_USER" "sftp://$SFTP_HOST" -e "
             set cmd:fail-exit yes;
             set sftp:auto-confirm no;
-            set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes';
+            set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=$SFTP_HOST_KEY_POLICY';
             set net:timeout 20;
             set net:max-retries 3;
             set net:reconnect-interval-base 5;

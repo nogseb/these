@@ -59,13 +59,15 @@ Dans [Settings → Secrets and variables → Actions de nogseb/these](https://gi
 | `OVH_SFTP_HOST` | Nom du serveur SFTP de l’hébergement OVHcloud |
 | `OVH_SFTP_USER` | Identifiant FTP/SFTP autorisé pour cet hébergement |
 | `OVH_SFTP_PASSWORD` | Mot de passe de cet utilisateur |
-| `OVH_SFTP_KNOWN_HOSTS` | Ligne OpenSSH `known_hosts` pour ce serveur, avec clé d’hôte vérifiée hors bande |
+| `OVH_SFTP_KNOWN_HOSTS` (optionnel) | Ligne OpenSSH `known_hosts` avec clé d’hôte vérifiée hors bande, pour imposer une clé dès la première connexion |
 
 Le domaine et son certificat HTTPS existent déjà. Le compte SFTP doit être autorisé à écrire dans `www/these`. Ne pas créer de CNAME ou changer les DNS : le site est un sous-dossier du domaine, pas un nouveau domaine GitHub Pages.
 
 Si les secrets sont absents, le workflow échoue explicitement **avant tout envoi**. Il ne signale jamais une publication réussie lorsqu’elle n’a pas eu lieu. Après leur configuration, lancer [Actions → Publier le projet de recherche sur nogues.app/these → Run workflow](https://github.com/nogseb/these/actions).
 
-Le workflow reprend le mécanisme SFTP de l’hébergement existant, mais exige l’authentification du serveur SSH. Fournir une ligne `known_hosts` provenant d’une connexion déjà approuvée, ou comparer son empreinte avec celle confirmée par OVHcloud avant de la configurer. Ne pas faire confiance à une clé obtenue par `ssh-keyscan` sans comparaison indépendante. La ligne doit correspondre exactement au nom d’hôte renseigné dans `OVH_SFTP_HOST`, sur le port SFTP standard 22. Aucune clé inconnue ou modifiée n’est acceptée automatiquement.
+Le workflow reprend le mécanisme SFTP de l’hébergement existant. Par défaut, il utilise la **confiance à la première connexion** (`StrictHostKeyChecking=accept-new`) : une clé inconnue est mémorisée, mais une clé modifiée est refusée. Le fichier `known_hosts` est conservé dans le cache GitHub Actions du dépôt. Si ce cache expire, une nouvelle première connexion est nécessaire. Ce modèle laisse un risque résiduel lors du premier contact, contrairement à une clé vérifiée indépendamment.
+
+Pour durcir la première connexion, fournir le secret optionnel `OVH_SFTP_KNOWN_HOSTS` depuis une connexion déjà approuvée, ou comparer son empreinte avec celle confirmée par OVHcloud. Le workflow impose alors `StrictHostKeyChecking=yes`. Ne pas utiliser une clé obtenue par `ssh-keyscan` sans comparaison indépendante. La ligne doit correspondre exactement au nom d’hôte renseigné dans `OVH_SFTP_HOST`, sur le port standard 22.
 
 Le workflow vérifie ensuite la page publique, l’image de partage et la synthèse. En cas d’erreur Apache, vérifier les directives autorisées par l’hébergement dans `site/.htaccess` sans modifier le `.htaccess` de la racine du domaine.
 
